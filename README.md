@@ -20,6 +20,15 @@ No es una app de la Junta de Andalucía. Usa la misma conexión que la app ofici
 4. Pulsa **Edit code**, borra todo, pega el contenido de `worker/worker.js` y pulsa **Deploy**.
 5. Copia la dirección del worker. Será algo como `https://recreo.tunombre.workers.dev`.
 
+Para los avisos en el iPhone (opcional):
+
+6. En **Storage & Databases** › **KV** › **Create**, crea un espacio llamado `RECREO`.
+7. En el worker: **Settings** › **Bindings** › **Add** › **KV namespace**. Nombre de la variable `RECREO`, espacio `RECREO`.
+8. En el worker: **Settings** › **Trigger events** › **Add** › **Cron Triggers**, con `*/15 * * * *` (cada 15 minutos).
+9. En el iPhone, con Recreo instalada: **Ajustes** › **Activar avisos**.
+
+Al activarlos, el worker guarda tu usuario y contraseña de iPasen en ese KV, dentro de tu cuenta de Cloudflare, para poder mirar Séneca con la app cerrada. Los avisos viajan cifrados hasta el iPhone. Si cierras sesión en Recreo, los avisos se desactivan y la cuenta se borra del KV.
+
 ### 2. Dirección del intermediario en la app
 
 Pon esa dirección en `js/config.js` (`INTERMEDIARIO`). Si la dejas vacía, la app la pide la primera vez.
@@ -43,11 +52,15 @@ Abre la dirección en **Safari** › botón **Compartir** › **Añadir a pantal
 - Responder y escribir mensajes nuevos al profesorado. Antes de enviar, la app siempre pide confirmación.
 - Mensajes enviados.
 - Horario por días, con la clase que toca ahora.
+- Notas de exámenes y trabajos, la más reciente primero: materia, actividad, fecha y nota.
+- Lo pendiente arriba de los mensajes: autorizaciones (se responden con Autorizo o No autorizo) y documentos para firmar.
+- Avisar de que un niño va a faltar: un día, varios días o solo algunas horas, con el motivo. También se puede retirar el aviso.
+- Avisos en el iPhone de mensajes, notas, autorizaciones y documentos nuevos, entre las 7:30 y las 22:00.
 - Tutoría: tutor o tutora, horario de atención a familias, faltas de asistencia, próximos días y profesorado.
 - Datos de ejemplo para ver la app sin conectarse.
 
 ## Lo que no hace
 
-- No avisa de los mensajes nuevos con la app cerrada. Para eso el intermediario tendría que guardar tu contraseña y consultar Séneca cada poco tiempo.
 - No envía archivos adjuntos.
-- No justifica faltas ni firma autorizaciones. Eso sigue en la app oficial.
+- No justifica las faltas que ya ha puesto el colegio.
+- No firma documentos con firma manuscrita. Avisa de que están y hay que firmarlos en la app oficial.

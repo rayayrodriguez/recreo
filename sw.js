@@ -1,6 +1,6 @@
 // Guarda la app para que abra al instante y sin conexión.
 // Los datos del cole no pasan por aquí: van siempre directos al intermediario.
-const VERSION = "recreo-1.0.0";
+const VERSION = "recreo-1.2.0";
 const ARCHIVOS = [
   "./",
   "index.html",
@@ -48,5 +48,40 @@ self.addEventListener("fetch", (e) => {
         return r;
       })
       .catch(() => caches.match(e.request, { ignoreSearch: true }).then((r) => r || caches.match("index.html"))),
+  );
+});
+
+// ── Avisos ────────────────────────────────────────────────────────────────
+
+self.addEventListener("push", (e) => {
+  let aviso = {};
+  try {
+    aviso = e.data ? e.data.json() : {};
+  } catch {
+    aviso = { cuerpo: e.data ? e.data.text() : "" };
+  }
+  e.waitUntil(self.registration.showNotification(aviso.titulo || "Recreo", {
+    body: aviso.cuerpo || "Hay novedades del cole.",
+    tag: aviso.etiqueta || undefined,
+    icon: "icons/icon-192.png",
+    badge: "icons/icon-192.png",
+    data: { matricula: aviso.matricula || "" },
+  }));
+});
+
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const matricula = (e.notification.data && e.notification.data.matricula) || "";
+  const destino = new URL(matricula ? `./?hijo=${encodeURIComponent(matricula)}` : "./", self.registration.scope).href;
+  e.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((ventanas) => {
+      for (const v of ventanas) {
+        if ("focus" in v) {
+          v.postMessage({ tipo: "abrir", matricula });
+          return v.focus();
+        }
+      }
+      return self.clients.openWindow(destino);
+    }),
   );
 });

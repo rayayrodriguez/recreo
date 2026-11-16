@@ -52,6 +52,40 @@ function aHtml(texto) {
   return texto.trim().replace(/\r?\n/g, "<br/>");
 }
 
+// Del cuaderno del profesorado, solo lo que tiene nota: materia, actividad, fecha y nota.
+export function extraerNotas(periodos) {
+  const filas = [];
+  for (const p of Array.isArray(periodos) ? periodos : []) {
+    for (const s of p.subjects || []) {
+      for (const a of s.activities || []) {
+        const entregas = a.diary_score || [];
+        const general = entregas.map((d) => d.note).filter((n) => n !== undefined && n !== null && n !== "");
+        const criterios = [...entregas.flatMap((d) => d.note_array || []), ...(a.note_array || [])]
+          .map((n) => n.note).filter((n) => n !== undefined && n !== null && n !== "");
+        let nota = general.length ? general[0] : null;
+        if (nota === null && criterios.length) {
+          const numeros = criterios.map((n) => Number(String(n).replace(",", ".")));
+          nota = numeros.every((n) => !Number.isNaN(n))
+            ? Math.round((numeros.reduce((x, y) => x + y, 0) / numeros.length) * 10) / 10
+            : criterios.join(", ");
+        }
+        if (nota === null) continue;
+        filas.push({
+          materia: String(s.name || "").trim(),
+          actividad: String(a.description_activity || "").trim(),
+          tipo: String(a.descriptionCatacteva || a.type_activity || "").trim(),
+          fecha: a.start_date || (entregas.find((d) => d.delivery_date) || {}).delivery_date || "",
+          nota,
+          comentario: (entregas.find((d) => d.comment) || {}).comment || "",
+          profesor: a.professor || "",
+          periodo: p.description || "",
+        });
+      }
+    }
+  }
+  return filas;
+}
+
 export class Pasen {
   constructor() {
     this.codigoPendiente = null;
@@ -292,5 +326,82 @@ export class Pasen {
   async agenda(desde, hasta) {
     const lista = await this.get("generales/get-agenda", { initdate: desde, enddate: hasta });
     return Array.isArray(lista) ? lista : [];
+  }
+
+  // ── Notas de exámenes y actividades ──────────────────────────────────────
+
+  async notas(matricula) {
+    const periodos = await this.get("seguimiento/get-actividades-evaluables-criterios", { enrollment: matricula });
+    return extraerNotas(periodos);
+  }
+
+  // ── Faltas avisadas por la familia ────────────────────────────────────────
+
+  // Tramos de un día concreto (dd/mm/aaaa), con su código para avisar solo de unas horas.
+  async tramosDia(matricula, dia) {
+    const lista = await this.get("horarios/get-horario", { enrollment: matricula, date: dia });
+    return Array.isArray(lista) ? lista : [];
+  }
+
+  avisarFalta({ matricula, desde, hasta, secciones, motivo }) {
+    return this.pedir("POST", "faltas/nueva-falta", {
+      json: {
+        enrollment: matricula,
+        initdate: desde,
+        enddate: hasta || desde,
+        observations: motivo || "",
+        sectionscode: secciones && secciones.length ? secciones : null,
+      },
+    });
+  }
+
+  async avisosFalta(matricula) {
+    const lista = await this.get("faltas/get-notificaciones", { enrollment: matricula });
+    return Array.isArray(lista) ? lista : [];
+  }
+
+  retirarAvisoFalta(codigo) {
+    return this.pedir("POST", "faltas/borrar-notificacion", { json: { codenotification: codigo } });
+  }
+
+  // ── Autorizaciones y documentos ───────────────────────────────────────────
+
+  async autorizaciones(matricula) {
+    const lista = await this.get("seguimiento/get-aut-act", { enrollment: matricula });
+    return Array.isArray(lista) ? lista : [];
+  }
+
+  detalleAutorizacion(id) {
+    return this.get("seguimiento/get-det-aut-act", { aluatprotut: id });
+  }
+
+  responderAutorizacion(a, autoriza, comentario = "") {
+    return this.pedir("POST", "seguimiento/set-aut-act-tut", {
+      json: { aluatpro: a.aluatpro, aluatprotut: a.aluatprotut, comments: comentario, signature: !!autoriza },
+    });
+  }
+
+  async documentosPendientes() {
+    const secciones = await this.get("firma/ipasen/bandeja-firma", { typeState: "P", page: 1 });
+    return (Array.isArray(secciones) ? secciones : []).flatMap((s) => s.documents || []);
+  }
+
+  // ── Avisos en el iPhone (los gestiona el intermediario) ───────────────────
+
+  async avisos(accion, datos) {
+    let r;
+    try {
+      r = await fetch(this.base + "avisos/" + accion, datos === undefined
+        ? {}
+        : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(datos) });
+    } catch {
+      throw new ErrorPasen("No hay conexión con el intermediario.");
+    }
+    const cuerpo = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const fallo = (cuerpo.errors || [])[0] || {};
+      throw new ErrorPasen(fallo.detail || `El intermediario ha respondido ${r.status}.`, r.status);
+    }
+    return cuerpo;
   }
 }

@@ -55,6 +55,11 @@ const conversaciones = {
 };
 
 const enviados = [];
+const avisosFalta = [];
+const autorizaciones = [
+  { aluatprotut: "AUT-D1", aluatpro: "P-1", enrollment: D1, motive: "Excursión al Castillo de Santa Catalina", signature: false,
+    signaturePeriod: `${haceDias(2).slice(0, 10)} - ${dentroDe(2)}`, hasAmount: true },
+];
 
 const HORARIO = {
   [D1]: [
@@ -167,6 +172,58 @@ export class PasenDemo {
       { codeabsence: "A1", dateabsence: haceDias(6).slice(0, 10), section: "9:00 - 9:45", subject: "Lengua", codejustification: "J1", motive: "Enfermedad" },
       { codeabsence: "A2", dateabsence: haceDias(6).slice(0, 10), section: "9:45 - 10:30", subject: "Matemáticas", codejustification: "J1", motive: "Enfermedad" },
     ] }];
+  }
+  async tramosDia(matricula, dia) {
+    await espera(250);
+    const [d, m, a] = dia.split("/").map(Number);
+    const semana = new Date(a, m - 1, d).getDay();
+    if (semana === 0 || semana === 6) return [];
+    return horarioDe(matricula).filter((t) => t.day === DIAS[semana - 1]).map((t) => ({ ...t, codesection: `${matricula}-${t.section}` }));
+  }
+  async avisarFalta({ matricula, desde, hasta, secciones, motivo }) {
+    await espera(500);
+    avisosFalta.unshift({ codenotification: Date.now(), enrollment: matricula, send_date: fecha(new Date()), start_date: desde, end_date: hasta || desde,
+      observation: motivo, sections: (secciones || []).map((c) => ({ description: TRAMOS[+String(c).split("-")[1] - 1] })) });
+  }
+  async avisosFalta(matricula) {
+    await espera(200);
+    return avisosFalta.filter((a) => a.enrollment === matricula);
+  }
+  async retirarAvisoFalta(codigo) {
+    await espera(300);
+    const i = avisosFalta.findIndex((a) => a.codenotification === codigo);
+    if (i >= 0) avisosFalta.splice(i, 1);
+  }
+  async autorizaciones(matricula) {
+    await espera(200);
+    return autorizaciones.filter((a) => a.enrollment === matricula);
+  }
+  async detalleAutorizacion(id) {
+    await espera(250);
+    const a = autorizaciones.find((x) => x.aluatprotut === id);
+    return { motive: a.motive, description: "Salida a pie desde el colegio a las 9:15. Vuelta antes del comedor.", amount: a.hasAmount ? 3.5 : 0 };
+  }
+  async responderAutorizacion(a, autoriza) {
+    await espera(500);
+    const x = autorizaciones.find((y) => y.aluatprotut === a.aluatprotut);
+    x.signature = true;
+    x.answer = autoriza;
+  }
+  async documentosPendientes() {
+    await espera(200);
+    return [{ id: 42, description: "Autorización de uso de imágenes del alumnado", sendBy: "Dirección del centro", date: haceDias(3).slice(0, 10) }];
+  }
+  async notas(matricula) {
+    await espera(250);
+    const n = (materia, actividad, dias, nota, tipo = "Examen") => ({ materia, actividad, tipo, fecha: haceDias(dias).slice(0, 10), nota });
+    if (matricula === D1) return [
+      n("Matemáticas", "Examen tema 3: fracciones", 2, 8.5), n("Lengua", "Dictado", 6, 7), n("Inglés", "Unit 2 test", 13, 9.25),
+      n("Ciencias Naturales", "Examen de las plantas", 20, 4.5), n("Matemáticas", "Examen tema 2", 34, 6),
+    ];
+    return [n("Lengua", "Lectura en voz alta", 4, "Sobresaliente", "Observación"), n("Matemáticas", "Sumas con llevadas", 15, 9)];
+  }
+  async avisos() {
+    throw new Error("Los avisos no funcionan con los datos de ejemplo.");
   }
   async agenda() {
     await espera(250);

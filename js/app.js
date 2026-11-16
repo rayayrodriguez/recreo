@@ -27,6 +27,7 @@ const svg = (d, extra = "") =>
 const ICONOS = {
   mensajes: svg('<path d="M4 6.5h16v11H4z"/><path d="m4.5 7 7.5 6 7.5-6"/>'),
   horario: svg('<rect x="3.5" y="4.5" width="17" height="16" rx="2"/><path d="M3.5 9.5h17M8 3v3M16 3v3M7.5 13h3M13.5 13h3M7.5 16.5h3"/>'),
+  notas: svg('<path d="M6 3.5h9l3 3v14H6z"/><path d="M9 11.5l2 2 4-4.5M9 17h6"/>'),
   tutoria: svg('<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5"/>'),
   recargar: svg('<path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4.5v4h-4"/>'),
   ajustes: svg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'),
@@ -127,7 +128,7 @@ function avisar(texto) {
 // ── Estado ──────────────────────────────────────────────────────────────────
 
 const COLORES = ["--hijo-1", "--hijo-2", "--hijo-3", "--hijo-4"];
-const VISTAS = { mensajes: "Mensajes", horario: "Horario", tutoria: "Tutoría" };
+const VISTAS = { mensajes: "Mensajes", horario: "Horario", notas: "Notas", tutoria: "Tutoría" };
 
 let api;
 const estado = {
@@ -142,6 +143,10 @@ const estado = {
   tutoria: {},
   faltas: {},
   agenda: null,
+  autorizaciones: {},
+  notas: {},
+  documentos: null,
+  avisosFalta: {},
   dia: null,
   cargando: 0,
   error: null,
@@ -437,6 +442,23 @@ async function cargarVista(forzar = false) {
         estado.enviados = await api.enviados(1);
       });
     }
+    // Lo pendiente no debe impedir ver los mensajes si falla.
+    tareas.push(async () => {
+      try {
+        estado.autorizaciones[m] = await api.autorizaciones(m);
+      } catch (e) {
+        if (e instanceof SesionCaducada || e instanceof Pide2FA) throw e;
+      }
+    });
+    if (forzar || !estado.documentos) {
+      tareas.push(async () => {
+        try {
+          estado.documentos = await api.documentosPendientes();
+        } catch (e) {
+          if (e instanceof SesionCaducada || e instanceof Pide2FA) throw e;
+        }
+      });
+    }
     if (forzar) tareas.push(actualizarNoLeidos);
   }
 
@@ -448,6 +470,19 @@ async function cargarVista(forzar = false) {
       tareas.push(async () => {
         const datos = await api.horario(m);
         estado.horario[m] = datos;
+        if (!api.demo) cache.guardar(clave, { cuando: Date.now(), datos });
+      });
+    }
+  }
+
+  if (estado.vista === "notas") {
+    const clave = "notas." + m;
+    const guardado = api.demo ? null : cache.leer(clave);
+    if (guardado && !estado.notas[m]) estado.notas[m] = guardado.datos;
+    if (forzar || !guardado || Date.now() - guardado.cuando > 3600000 || !estado.notas[m]) {
+      tareas.push(async () => {
+        const datos = await api.notas(m);
+        estado.notas[m] = datos;
         if (!api.demo) cache.guardar(clave, { cuando: Date.now(), datos });
       });
     }
@@ -466,6 +501,13 @@ async function cargarVista(forzar = false) {
         });
       }
     }
+    tareas.push(async () => {
+      try {
+        estado.avisosFalta[m] = await api.avisosFalta(m);
+      } catch (e) {
+        if (e instanceof SesionCaducada || e instanceof Pide2FA) throw e;
+      }
+    });
     if (forzar || !estado.agenda) {
       tareas.push(async () => {
         const hoy = new Date();
@@ -518,6 +560,7 @@ function pintarVista() {
   }
   if (estado.vista === "mensajes") contenido.push(...vistaMensajes(hijo));
   if (estado.vista === "horario") contenido.push(...vistaHorario(hijo));
+  if (estado.vista === "notas") contenido.push(...vistaNotas(hijo));
   if (estado.vista === "tutoria") contenido.push(...vistaTutoria(hijo));
   nodos.vista.replaceChildren(...contenido);
 }
@@ -537,6 +580,9 @@ function vistaMensajes(hijo) {
   const datos = estado.mensajes[hijo.matricula];
   const tutor = hijo.tutor ? nombrePila(hijo.tutor) : "";
   const fuera = [];
+
+  const pendientes = bloquePendientes(hijo);
+  if (pendientes) fuera.push(pendientes);
 
   fuera.push(h("button", { class: "boton primario ancho escribir", type: "button", onclick: () => abrirRedactar(hijo) },
     icono("escribir"), tutor ? `Escribir a ${tutor}` : "Escribir un mensaje"));
@@ -596,6 +642,112 @@ function vistaMensajes(hijo) {
     } }, "Ver mensajes anteriores"));
   }
   return fuera;
+}
+
+// ── Pendiente: autorizaciones y documentos ──────────────────────────────────
+
+function finDePlazo(periodo) {
+  const fechas = String(periodo || "").match(/\d{1,2}\/\d{1,2}\/\d{4}/g);
+  return fechas && fechas.length ? fechas[fechas.length - 1] : "";
+}
+
+function bloquePendientes(hijo) {
+  const auts = (estado.autorizaciones[hijo.matricula] || []).filter((a) => !a.signature);
+  const docs = estado.documentos || [];
+  if (!auts.length && !docs.length) return null;
+  return h("section", { class: "pendiente", "aria-label": "Pendiente de responder" },
+    h("h2", {}, auts.length + docs.length === 1 ? "Tienes algo pendiente" : `Tienes ${auts.length + docs.length} cosas pendientes`),
+    h("ul", {},
+      ...auts.map((a) => {
+        const fin = finDePlazo(a.signaturePeriod);
+        return h("li", {}, h("button", { type: "button", onclick: () => abrirAutorizacion(a, hijo) },
+          h("span", { class: "tipo" }, "Autorización"),
+          h("span", { class: "principal" }, a.motive || "Actividad"),
+          fin ? h("span", { class: "secundario" }, `Hasta el ${fechaLarga(fin)}`) : null,
+        ));
+      }),
+      ...docs.map((d) => h("li", {}, h("button", { type: "button", onclick: () => abrirDocumento(d) },
+        h("span", { class: "tipo" }, "Documento para firmar"),
+        h("span", { class: "principal" }, d.description || "Documento"),
+        d.sendBy ? h("span", { class: "secundario" }, `Lo envía ${d.sendBy}`) : null,
+      ))),
+    ),
+  );
+}
+
+function abrirDocumento(d) {
+  let capa;
+  capa = abrirCapa(
+    h("div", { class: "confirmacion" },
+      h("h2", {}, d.description || "Documento para firmar"),
+      h("p", {}, "Este documento se firma dibujando tu firma, y eso de momento solo se puede hacer en la app oficial iPasen, en el apartado de firmas."),
+      d.sendBy ? h("p", { class: "nota" }, `Lo envía ${d.sendBy}${d.date ? `, el ${fechaLarga(d.date)}` : ""}.`) : null,
+      h("div", { class: "botones" }, h("button", { class: "boton secundario", type: "button", onclick: () => cerrarCapa(capa) }, "Entendido")),
+    ),
+    "dialogo",
+  );
+}
+
+function abrirAutorizacion(a, hijo) {
+  const detalle = h("div", { class: "detalle-autorizacion" }, h("p", { class: "nota" }, "Cargando detalles…"));
+  const comentario = h("textarea", { id: "comentario", rows: "3", placeholder: "Opcional", autocapitalize: "sentences" });
+  const error = h("p", { class: "error", role: "alert" });
+  const si = h("button", { class: "boton primario ancho", type: "button" }, "Autorizo");
+  const no = h("button", { class: "boton secundario ancho", type: "button" }, "No autorizo");
+  const fin = finDePlazo(a.signaturePeriod);
+  let capa;
+
+  const responder = async (autoriza) => {
+    error.textContent = "";
+    const ok = await confirmar({
+      titulo: autoriza ? "¿Autorizar esta actividad?" : "¿No autorizar esta actividad?",
+      filas: [["Actividad", a.motive || ""], ["Alumno", `${hijo.nombre} (${hijo.grupo || hijo.curso})`], ["Respuesta", autoriza ? "Autorizo" : "No autorizo"],
+        ...(comentario.value.trim() ? [["Comentario", comentario.value.trim()]] : [])],
+      aceptar: autoriza ? "Autorizar" : "No autorizar",
+    });
+    if (!ok) return;
+    si.disabled = no.disabled = true;
+    try {
+      await protegido(() => api.responderAutorizacion(a, autoriza, comentario.value.trim()));
+      a.signature = true;
+      avisar(autoriza ? "Autorización enviada" : "Respuesta enviada");
+      cerrarCapa(capa);
+      pintarVista();
+      cargarVista();
+    } catch (e) {
+      if (e instanceof SesionCaducada || e instanceof Pide2FA) return;
+      error.textContent = "No se ha enviado: " + e.message;
+      si.disabled = no.disabled = false;
+    }
+  };
+  si.addEventListener("click", () => responder(true));
+  no.addEventListener("click", () => responder(false));
+
+  capa = abrirCapa(h("div", { class: "hoja-capa" },
+    barraCapa("Autorización", () => cerrarCapa(capa), "Volver"),
+    h("div", { class: "formulario redactar" },
+      h("p", { class: "sobre", style: `--color: var(${colorDe(hijo.matricula)})` }, `${hijo.nombre} (${hijo.grupo || hijo.curso})`),
+      h("h2", { class: "titulo-ficha" }, a.motive || "Actividad"),
+      fin ? h("p", { class: "nota" }, `Puedes responder hasta el ${fechaLarga(fin)}.`) : null,
+      detalle,
+      h("label", { for: "comentario" }, "Comentario para el colegio"), comentario,
+      h("p", { class: "nota" }, "Una vez enviada, la respuesta no se puede cambiar desde la app."),
+      error, si, no,
+    ),
+  ), "pantalla");
+
+  api.detalleAutorizacion(a.aluatprotut).then((d) => {
+    const filas = [];
+    const descripcion = d && (d.description || d.descripcion || d.observations || d.detail);
+    if (descripcion) filas.push(h("p", { class: "texto-ficha" }, conEnlaces(textoDe(descripcion))));
+    const importe = d && (d.amount ?? d.importe);
+    if (importe !== undefined && importe !== null && Number(importe) > 0) {
+      filas.push(h("p", { class: "importe" }, `Importe: ${Number(importe).toLocaleString("es-ES", { style: "currency", currency: "EUR" })}`));
+    } else if (a.hasAmount) {
+      filas.push(h("p", { class: "importe" }, "Tiene coste. Consulta el importe con el colegio."));
+    }
+    detalle.replaceChildren(...filas);
+  }).catch(() => detalle.replaceChildren(a.hasAmount ? h("p", { class: "importe" }, "Tiene coste.") : ""));
 }
 
 function destinoDe(m) {
@@ -933,6 +1085,39 @@ function vistaHorario(hijo) {
   return fuera;
 }
 
+// ── Notas ───────────────────────────────────────────────────────────────────
+
+function textoNota(n) {
+  const v = Number(String(n).replace(",", "."));
+  return Number.isNaN(v) ? String(n) : v.toLocaleString("es-ES", { maximumFractionDigits: 2 });
+}
+
+function vistaNotas(hijo) {
+  const lista = estado.notas[hijo.matricula];
+  if (!lista) return [h("p", { class: "vacio" }, "Cargando notas…")];
+  if (!lista.length) {
+    return [h("p", { class: "vacio" }, `Todavía no hay notas de ${hijo.nombre}.`),
+      h("p", { class: "nota centrada" }, "Aquí salen las notas de exámenes y trabajos en cuanto el profesorado las pone en Séneca.")];
+  }
+  const ordenadas = [...lista].sort((a, b) => (leerFecha(b.fecha) || 0) - (leerFecha(a.fecha) || 0));
+  return [
+    h("ol", { class: "hoja lista-notas" }, ...ordenadas.map((n) => {
+      const v = Number(String(n.nota).replace(",", "."));
+      const suspenso = !Number.isNaN(v) && v < 5;
+      const que = n.actividad || n.tipo || "Actividad";
+      return h("li", {},
+        h("span", { class: "nota-texto" },
+          h("span", { class: "materia" }, n.materia || "Sin materia"),
+          h("span", { class: "actividad" }, que),
+          n.fecha ? h("span", { class: "fecha" }, fechaLarga(n.fecha).replace(/^./, (c) => c.toUpperCase())) : null,
+          n.comentario ? h("span", { class: "comentario" }, textoDe(n.comentario)) : null,
+        ),
+        h("span", { class: "nota-valor" + (suspenso ? " baja" : "") }, textoNota(n.nota)),
+      );
+    })),
+  ];
+}
+
 // ── Tutoría ─────────────────────────────────────────────────────────────────
 
 function vistaTutoria(hijo) {
@@ -963,6 +1148,8 @@ function vistaTutoria(hijo) {
 
   fuera.push(h("section", { class: "bloque" },
     h("h3", {}, "Faltas de asistencia"),
+    h("button", { class: "boton secundario ancho", type: "button", onclick: () => abrirAvisoFalta(hijo) }, `Avisar de que ${hijo.nombre} va a faltar`),
+    ...bloqueAvisosFalta(hijo),
     ...bloqueFaltas(faltas),
   ));
 
@@ -1016,6 +1203,178 @@ function bloqueFaltas(faltas) {
   ];
 }
 
+// ── Avisar de una falta ─────────────────────────────────────────────────────
+
+const aIso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const deIso = (v) => {
+  const [a, m, d] = String(v).split("-");
+  return a && m && d ? `${d}/${m}/${a}` : "";
+};
+
+function bloqueAvisosFalta(hijo) {
+  const lista = estado.avisosFalta[hijo.matricula] || [];
+  const hoy = new Date(new Date().toDateString());
+  const vigentes = lista.filter((n) => (leerFecha(n.end_date || n.start_date) || hoy) >= hoy);
+  if (!vigentes.length) return [];
+  return [
+    h("p", { class: "subtitulo" }, "Faltas que has avisado"),
+    h("ul", { class: "hoja lista-simple" }, ...vigentes.map((n) => {
+      const dias = n.end_date && n.end_date !== n.start_date ? `Del ${fechaLarga(n.start_date)} al ${fechaLarga(n.end_date)}` : fechaLarga(n.start_date);
+      const horas = (n.sections || []).map((s) => s.description).filter(Boolean);
+      return h("li", { class: "con-accion" },
+        h("span", { class: "principal" }, dias),
+        h("span", { class: "secundario" }, horas.length ? horas.join(", ") : "Todo el día"),
+        n.observation ? h("span", { class: "secundario" }, n.observation.trim()) : null,
+        h("button", { class: "boton enlace accion", type: "button", onclick: async () => {
+          const ok = await confirmar({ titulo: "¿Retirar este aviso de falta?", filas: [["Alumno", hijo.nombre], ["Días", dias]], aceptar: "Retirar aviso" });
+          if (!ok) return;
+          try {
+            await protegido(() => api.retirarAvisoFalta(n.codenotification));
+            avisar("Aviso retirado");
+            cargarVista(true);
+          } catch (e) {
+            if (!(e instanceof SesionCaducada || e instanceof Pide2FA)) avisar("No se ha retirado: " + e.message);
+          }
+        } }, "Retirar"),
+      );
+    })),
+  ];
+}
+
+function abrirAvisoFalta(hijo) {
+  const hoy = new Date();
+  const desde = h("input", { id: "falta-desde", type: "date", value: aIso(hoy), min: aIso(new Date(hoy.getTime() - 30 * 86400000)) });
+  const hasta = h("input", { id: "falta-hasta", type: "date", value: aIso(hoy) });
+  const variosDias = h("input", { id: "falta-varios", type: "checkbox" });
+  const todoElDia = h("input", { id: "falta-todo", type: "radio", name: "alcance", checked: true });
+  const algunasHoras = h("input", { id: "falta-horas", type: "radio", name: "alcance" });
+  const filaHasta = h("div", { class: "campo", hidden: true }, h("label", { for: "falta-hasta" }, "Hasta"), hasta);
+  const alcance = h("fieldset", { class: "alcance" },
+    h("legend", {}, "¿Cuánto tiempo?"),
+    h("label", { class: "casilla", for: "falta-todo" }, todoElDia, h("span", {}, "Todo el día")),
+    h("label", { class: "casilla", for: "falta-horas" }, algunasHoras, h("span", {}, "Solo algunas horas")),
+  );
+  const horas = h("div", { class: "horas-falta", hidden: true });
+  const motivo = h("textarea", { id: "falta-motivo", rows: "3", placeholder: "Por ejemplo: cita en el médico", autocapitalize: "sentences" });
+  const error = h("p", { class: "error", role: "alert" });
+  const enviar = h("button", { class: "boton primario ancho", type: "button" }, "Avisar al colegio");
+  let tramos = [];
+  let capa;
+
+  async function cargarHoras() {
+    horas.replaceChildren(h("p", { class: "nota" }, "Cargando las clases de ese día…"));
+    tramos = [];
+    try {
+      const lista = await protegido(() => api.tramosDia(hijo.matricula, deIso(desde.value)));
+      const porTramo = new Map();
+      for (const s of lista) {
+        const clave = s.hoursection || s.section;
+        const t = porTramo.get(clave) || { hora: s.hoursection || "", materias: [], codigos: [], orden: minutos(s.hoursection) ?? s.section ?? 0 };
+        if (s.subject && !t.materias.includes(s.subject)) t.materias.push(s.subject);
+        if (s.codesection !== undefined && !t.codigos.includes(s.codesection)) t.codigos.push(s.codesection);
+        porTramo.set(clave, t);
+      }
+      tramos = [...porTramo.values()].filter((t) => t.codigos.length).sort((a, b) => a.orden - b.orden);
+      if (!tramos.length) {
+        horas.replaceChildren(h("p", { class: "nota" }, `${hijo.nombre} no tiene clases ese día.`));
+        return;
+      }
+      horas.replaceChildren(...tramos.map((t, i) => h("label", { class: "casilla", for: `tramo-${i}` },
+        h("input", { id: `tramo-${i}`, type: "checkbox", "data-i": String(i) }),
+        h("span", {}, h("strong", {}, t.hora), " ", t.materias.join(" / ")))));
+    } catch (e) {
+      if (e instanceof SesionCaducada || e instanceof Pide2FA) return;
+      horas.replaceChildren(h("p", { class: "error" }, "No se han podido cargar las clases: " + e.message));
+    }
+  }
+
+  function actualizar() {
+    filaHasta.hidden = !variosDias.checked;
+    alcance.hidden = variosDias.checked;
+    if (variosDias.checked) todoElDia.checked = true;
+    if (!variosDias.checked) hasta.value = desde.value;
+    if (hasta.value < desde.value) hasta.value = desde.value;
+    hasta.min = desde.value;
+    const verHoras = !variosDias.checked && algunasHoras.checked;
+    if (verHoras && horas.hidden) cargarHoras();
+    horas.hidden = !verHoras;
+  }
+  variosDias.addEventListener("change", actualizar);
+  todoElDia.addEventListener("change", actualizar);
+  algunasHoras.addEventListener("change", actualizar);
+  desde.addEventListener("change", () => {
+    actualizar();
+    if (!horas.hidden) cargarHoras();
+  });
+  hasta.addEventListener("change", actualizar);
+
+  enviar.addEventListener("click", async () => {
+    error.textContent = "";
+    const inicio = deIso(desde.value);
+    const fin = variosDias.checked ? deIso(hasta.value) : inicio;
+    if (!inicio || !fin) {
+      error.textContent = "Elige el día.";
+      return;
+    }
+    const dias = (leerFecha(fin) - leerFecha(inicio)) / 86400000;
+    if (dias < 0) {
+      error.textContent = "El último día no puede ser anterior al primero.";
+      return;
+    }
+    if (dias > 31) {
+      error.textContent = "Son más de 31 días. Para eso habla directamente con el colegio.";
+      return;
+    }
+    let secciones = null;
+    let textoHoras = "Todo el día";
+    if (!variosDias.checked && algunasHoras.checked) {
+      const marcados = [...horas.querySelectorAll("input:checked")].map((x) => tramos[+x.dataset.i]);
+      if (!marcados.length) {
+        error.textContent = "Marca las horas en las que va a faltar.";
+        return;
+      }
+      secciones = marcados.flatMap((t) => t.codigos);
+      textoHoras = marcados.map((t) => t.hora).join(", ");
+    }
+    const textoDias = inicio === fin ? fechaLarga(inicio) : `Del ${fechaLarga(inicio)} al ${fechaLarga(fin)}`;
+    const ok = await confirmar({
+      titulo: "¿Avisar de esta falta?",
+      filas: [["Alumno", `${hijo.nombre} (${hijo.grupo || hijo.curso})`], ["Días", textoDias], ["Horas", textoHoras],
+        ["Motivo", motivo.value.trim() || "Sin motivo"]],
+      aceptar: "Avisar al colegio",
+    });
+    if (!ok) return;
+    enviar.disabled = true;
+    enviar.textContent = "Enviando…";
+    try {
+      await protegido(() => api.avisarFalta({ matricula: hijo.matricula, desde: inicio, hasta: fin, secciones, motivo: motivo.value.trim() }));
+      avisar("Falta avisada");
+      cerrarCapa(capa);
+      cargarVista(true);
+    } catch (e) {
+      if (e instanceof SesionCaducada || e instanceof Pide2FA) return;
+      error.textContent = "No se ha enviado: " + e.message;
+      enviar.disabled = false;
+      enviar.textContent = "Avisar al colegio";
+    }
+  });
+
+  capa = abrirCapa(h("div", { class: "hoja-capa" },
+    barraCapa("Avisar de una falta", () => cerrarCapa(capa), "Cancelar"),
+    h("div", { class: "formulario redactar" },
+      h("p", { class: "sobre", style: `--color: var(${colorDe(hijo.matricula)})` }, `${hijo.nombre} (${hijo.grupo || hijo.curso})`),
+      h("div", { class: "campo" }, h("label", { for: "falta-desde" }, "Día"), desde),
+      h("label", { class: "casilla", for: "falta-varios" }, variosDias, h("span", {}, "Varios días seguidos")),
+      filaHasta,
+      alcance,
+      horas,
+      h("label", { for: "falta-motivo" }, "Motivo"), motivo,
+      h("p", { class: "nota" }, "El aviso le llega al colegio. Si al final no falta, puedes retirarlo desde la pestaña Tutoría."),
+      error, enviar,
+    ),
+  ), "pantalla");
+}
+
 // ── Ajustes ─────────────────────────────────────────────────────────────────
 
 function abrirAjustes() {
@@ -1028,6 +1387,8 @@ function abrirAjustes() {
       api.demo
         ? h("p", { class: "nota" }, "Estás viendo datos de ejemplo. Nada de esto viene de Séneca.")
         : [
+          seccionAvisos(),
+          h("h2", { class: "apartado" }, "Conexión"),
           h("label", { for: "ajuste-intermediario" }, "Dirección del intermediario"),
           intermediario,
           h("button", { class: "boton secundario", type: "button", onclick: () => {
@@ -1048,10 +1409,15 @@ function abrirAjustes() {
             cerrarCapa(capa);
           } }, "Olvidar la contraseña") : null,
         ],
-      h("button", { class: "boton peligro", type: "button", onclick: () => {
+      h("button", { class: "boton peligro", type: "button", onclick: async () => {
+        if (!api.demo && almacen.leer("avisos")) {
+          await desactivarAvisos().catch(() => {});
+        }
         api.salir();
         almacen.borrarTodo(["intermediario", "dispositivoDeConfianza"]);
         estado.mensajes = {}; estado.horario = {}; estado.tutoria = {}; estado.faltas = {}; estado.agenda = null; estado.enviados = null; estado.noLeidos = {};
+        estado.autorizaciones = {}; estado.notas = {}; estado.documentos = null; estado.avisosFalta = {};
+        estado.vista = "mensajes"; estado.bandeja = "recibidos"; estado.dia = null; estado.hijos = [];
         api = new Pasen();
         pantallaAcceso();
       } }, api.demo ? "Salir de los datos de ejemplo" : "Cerrar sesión y borrar los datos"),
@@ -1060,10 +1426,199 @@ function abrirAjustes() {
   ), "pantalla");
 }
 
+// ── Avisos en el iPhone ─────────────────────────────────────────────────────
+
+function desdeB64url(cadena) {
+  let s = String(cadena).replace(/-/g, "+").replace(/_/g, "/");
+  while (s.length % 4) s += "=";
+  return Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+}
+
+const esIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const instalada = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+
+async function suscripcionActual() {
+  if (!("serviceWorker" in navigator)) return null;
+  const reg = await navigator.serviceWorker.getRegistration();
+  return reg && reg.pushManager ? reg.pushManager.getSubscription() : null;
+}
+
+async function desactivarAvisos() {
+  const datos = almacen.leer("avisos");
+  const cred = almacen.leer("credenciales");
+  const sub = await suscripcionActual().catch(() => null);
+  if (datos && cred) await api.avisos("baja", { usuario: cred.usuario, clave: cred.clave, endpoint: datos.endpoint });
+  if (sub) await sub.unsubscribe().catch(() => {});
+  almacen.guardar("avisos", null);
+}
+
+function seccionAvisos() {
+  const caja = h("section", { class: "seccion-avisos" });
+  const titulo = h("h2", { class: "apartado" }, "Avisos en el iPhone");
+  const explicacion = "Recreo mira Séneca cada 15 minutos y te avisa de mensajes, notas, autorizaciones y documentos nuevos, entre las 7:30 y las 22:00. Para hacerlo con la app cerrada, el intermediario guarda tu usuario y contraseña de iPasen en tu cuenta de Cloudflare.";
+
+  const pintar = (...contenido) => caja.replaceChildren(titulo, ...contenido.flat(Infinity).filter(Boolean));
+
+  async function activar(cred, boton, error, codigo = "") {
+    error.textContent = "";
+    boton.disabled = true;
+    try {
+      if (!codigo) {
+        const permiso = await Notification.requestPermission();
+        if (permiso !== "granted") throw new ErrorPasen("No has dado permiso. Puedes darlo en Ajustes del iPhone › Notificaciones › Recreo.");
+      }
+      const reg = await navigator.serviceWorker.ready;
+      const { publica } = await api.avisos("clave");
+      const claveServidor = desdeB64url(publica);
+      let sub = await reg.pushManager.getSubscription();
+      if (sub && sub.options && sub.options.applicationServerKey) {
+        const actual = new Uint8Array(sub.options.applicationServerKey);
+        if (actual.length !== claveServidor.length || actual.some((b, i) => b !== claveServidor[i])) {
+          await sub.unsubscribe();
+          sub = null;
+        }
+      }
+      if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: claveServidor });
+      const res = await api.avisos("alta", {
+        usuario: cred.usuario, clave: cred.clave, codigo,
+        confiable: almacen.leer("dispositivoDeConfianza"), suscripcion: sub.toJSON(),
+      });
+      if (res.codigo) {
+        pedirCodigo(cred, res.enviadoA);
+        return;
+      }
+      almacen.guardar("avisos", { endpoint: sub.endpoint, usuario: cred.usuario });
+      avisar("Avisos activados");
+      mostrar();
+    } catch (e) {
+      error.textContent = e.message || "No se han podido activar los avisos.";
+      boton.disabled = false;
+    }
+  }
+
+  function pedirCodigo(cred, enviadoA) {
+    const codigo = h("input", { id: "avisos-codigo", inputmode: "numeric", autocomplete: "one-time-code", maxlength: "10" });
+    const error = h("p", { class: "error", role: "alert" });
+    const boton = h("button", { class: "boton primario", type: "button" }, "Confirmar código");
+    boton.addEventListener("click", () => {
+      if (!codigo.value.trim()) {
+        codigo.focus();
+        return;
+      }
+      activar(cred, boton, error, codigo.value.trim());
+    });
+    pintar(
+      h("p", { class: "nota" }, `Séneca pide verificar este acceso. Te ha enviado un código${enviadoA ? ` a ${enviadoA}` : ""}.`),
+      h("label", { for: "avisos-codigo" }, "Código"), codigo, error, boton,
+    );
+  }
+
+  function formularioActivar(textoBoton = "Activar avisos", aviso = "") {
+    const guardadas = almacen.leer("credenciales");
+    const usuario = h("input", { id: "avisos-usuario", autocomplete: "username", autocapitalize: "none", autocorrect: "off" });
+    const clave = h("input", { id: "avisos-clave", type: "password", autocomplete: "current-password" });
+    const error = h("p", { class: "error", role: "alert" });
+    const boton = h("button", { class: "boton primario", type: "button" }, textoBoton);
+    boton.addEventListener("click", () => {
+      const cred = guardadas || { usuario: usuario.value.trim(), clave: clave.value };
+      if (!cred.usuario || !cred.clave) {
+        error.textContent = "Escribe tu usuario y contraseña de iPasen.";
+        return;
+      }
+      activar(cred, boton, error);
+    });
+    pintar(
+      aviso ? h("p", { class: "aviso-pausa" }, aviso) : null,
+      h("p", { class: "nota" }, explicacion),
+      guardadas ? null : [h("label", { for: "avisos-usuario" }, "Usuario de iPasen"), usuario, h("label", { for: "avisos-clave" }, "Contraseña"), clave],
+      error, boton,
+    );
+  }
+
+  async function mostrar() {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+      pintar(h("p", { class: "nota" }, esIOS() && !instalada()
+        ? "Para recibir avisos, primero añade Recreo a la pantalla de inicio (Compartir › Añadir a pantalla de inicio) y ábrela desde ahí."
+        : "Este navegador no puede recibir avisos."));
+      return;
+    }
+    if (esIOS() && !instalada()) {
+      pintar(h("p", { class: "nota" }, "Para recibir avisos, primero añade Recreo a la pantalla de inicio (Compartir › Añadir a pantalla de inicio) y ábrela desde ahí."));
+      return;
+    }
+    const datos = almacen.leer("avisos");
+    const cred = almacen.leer("credenciales");
+    if (!datos) {
+      formularioActivar();
+      return;
+    }
+    pintar(h("p", { class: "nota" }, "Comprobando…"));
+    let estadoServidor = null;
+    if (cred) {
+      try {
+        estadoServidor = await api.avisos("estado", { usuario: cred.usuario, clave: cred.clave, endpoint: datos.endpoint });
+      } catch {
+        estadoServidor = null;
+      }
+    }
+    if (estadoServidor && (!estadoServidor.activo || estadoServidor.estado !== "ok")) {
+      const motivo = estadoServidor.estado === "codigo" ? "Los avisos están en pausa: Séneca pide un código para seguir."
+        : estadoServidor.estado === "clave" ? "Los avisos están en pausa: la contraseña de iPasen ha cambiado."
+        : "Los avisos no están activos en este iPhone.";
+      formularioActivar("Reactivar avisos", motivo);
+      return;
+    }
+    const prueba = h("button", { class: "boton secundario", type: "button" }, "Mandar un aviso de prueba");
+    const quitar = h("button", { class: "boton secundario", type: "button" }, "Desactivar avisos");
+    const error = h("p", { class: "error", role: "alert" });
+    prueba.addEventListener("click", async () => {
+      error.textContent = "";
+      const c = almacen.leer("credenciales");
+      if (!c) {
+        error.textContent = "Para la prueba hace falta tener la contraseña guardada en este iPhone.";
+        return;
+      }
+      prueba.disabled = true;
+      try {
+        await api.avisos("prueba", { usuario: c.usuario, clave: c.clave, endpoint: datos.endpoint });
+        avisar("Aviso enviado. Llegará en unos segundos.");
+      } catch (e) {
+        error.textContent = e.message;
+      }
+      prueba.disabled = false;
+    });
+    quitar.addEventListener("click", async () => {
+      quitar.disabled = true;
+      try {
+        await desactivarAvisos();
+        avisar("Avisos desactivados");
+        mostrar();
+      } catch (e) {
+        error.textContent = e.message;
+        quitar.disabled = false;
+      }
+    });
+    pintar(
+      h("p", { class: "estado-avisos" }, "Activados en este iPhone."),
+      h("p", { class: "nota" }, "Te avisa de mensajes, notas, autorizaciones y documentos nuevos entre las 7:30 y las 22:00. Lo que llegue de noche te lo avisa a primera hora."),
+      error, prueba, quitar,
+    );
+  }
+
+  mostrar();
+  return caja;
+}
+
 // ── Inicio ──────────────────────────────────────────────────────────────────
 
 function iniciar() {
   if (!almacen.leer("intermediario") && INTERMEDIARIO) almacen.guardar("intermediario", INTERMEDIARIO);
+  // Al abrir la app desde un aviso llega el hijo al que se refiere
+  const desdeAviso = new URLSearchParams(location.search).get("hijo");
+  if (desdeAviso) {
+    almacen.guardar("hijo", desdeAviso);
+    history.replaceState(null, "", location.pathname);
+  }
   api = almacen.leer("demo") ? new PasenDemo() : new Pasen();
   if (api.demo || almacen.leer("token") || almacen.leer("credenciales")) arrancar();
   else pantallaAcceso();
@@ -1075,9 +1630,27 @@ function iniciar() {
     }
   });
 
-  if ("serviceWorker" in navigator && location.protocol === "https:") {
+  if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
+    // Al tocar un aviso con la app ya abierta
+    navigator.serviceWorker.addEventListener("message", (ev) => {
+      if (ev.data && ev.data.tipo === "abrir") abrirDesdeAviso(ev.data.matricula);
+    });
   }
+}
+
+function abrirDesdeAviso(matricula) {
+  if (!nodos.vista || !nodos.vista.isConnected) return;
+  cerrarCapas();
+  if (matricula && estado.hijos.some((x) => x.matricula === matricula)) {
+    estado.matricula = matricula;
+    almacen.guardar("hijo", matricula);
+    aplicarColor();
+    pintarEtiquetas();
+  }
+  estado.vista = "mensajes";
+  estado.bandeja = "recibidos";
+  cargarVista(true);
 }
 
 iniciar();
