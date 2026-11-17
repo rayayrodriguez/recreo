@@ -18,7 +18,7 @@ No es una app de la Junta de Andalucía. Usa la misma conexión que la app ofici
 2. Entra en **Workers & Pages** › **Create** › **Create Worker** (plantilla «Hello World»).
 3. Llámalo `recreo` y pulsa **Deploy**.
 4. Pulsa **Edit code**, borra todo, pega el contenido de `worker/worker.js` y pulsa **Deploy**.
-5. Copia la dirección del worker. Será algo como `https://recreo.tunombre.workers.dev`.
+5. Copia la dirección del worker. Será algo como `https://recreo.sergiodammerung.workers.dev`.
 
 Para los avisos en el iPhone (opcional):
 
