@@ -1,0 +1,13 @@
+# Configuración del worker "recreo", igual que la del panel de Cloudflare.
+# Solo hace falta si algún día se despliega con Wrangler (npx wrangler deploy desde esta carpeta):
+# así no se pierden el enlace al KV ni la revisión cada 15 minutos.
+name = "recreo"
+main = "worker.js"
+compatibility_date = "2026-11-01"
+
+[[kv_namespaces]]
+binding = "RECREO"
+id = "9836a68c457d46db8024f1806e796173"
+
+[triggers]
+crons = ["*/15 * * * *"]
