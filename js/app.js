@@ -558,14 +558,14 @@ function pintarVista() {
   }
   if (!hijo) {
     contenido.push(estado.cargando || !estado.error ? h("p", { class: "vacio" }, "Cargando…") : null);
-    nodos.vista.replaceChildren(...contenido);
+    nodos.vista.replaceChildren(...contenido.filter(Boolean));
     return;
   }
   if (estado.vista === "mensajes") contenido.push(...vistaMensajes(hijo));
   if (estado.vista === "horario") contenido.push(...vistaHorario(hijo));
   if (estado.vista === "notas") contenido.push(...vistaNotas(hijo));
   if (estado.vista === "tutoria") contenido.push(...vistaTutoria(hijo));
-  nodos.vista.replaceChildren(...contenido);
+  nodos.vista.replaceChildren(...contenido.filter(Boolean));
 }
 
 // ── Mensajes ────────────────────────────────────────────────────────────────

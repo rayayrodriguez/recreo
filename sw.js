@@ -1,6 +1,6 @@
 // Guarda la app para que abra al instante y sin conexión.
 // Los datos del cole no pasan por aquí: van siempre directos al intermediario.
-const VERSION = "recreo-1.2.1";
+const VERSION = "recreo-1.2.2";
 const ARCHIVOS = [
   "./",
   "index.html",

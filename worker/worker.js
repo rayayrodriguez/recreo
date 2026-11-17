@@ -142,7 +142,7 @@ function enSilencio() {
 // ── Reenvío a Séneca ────────────────────────────────────────────────────────
 
 async function reenviar(request, ruta, url, cors) {
-  const cabeceras = new Headers({ "User-Agent": AGENTE, "Accept": "application/json", "Accept-Charset": "utf-8" });
+  const cabeceras = new Headers({ "User-Agent": AGENTE, "Accept": "*/*", "Accept-Charset": "utf-8" });
   for (const nombre of ["Authorization", "Content-Type"]) {
     const valor = request.headers.get(nombre);
     if (valor) cabeceras.set(nombre, valor);
@@ -188,7 +188,7 @@ async function entrar(cuenta, codigo = "") {
   }
   const r = await fetch(SENECA + "security/oauth/token", {
     method: "POST",
-    headers: { "User-Agent": AGENTE, "Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded" },
+    headers: { "User-Agent": AGENTE, "Accept": "*/*", "Accept-Charset": "utf-8", "Content-Type": "application/x-www-form-urlencoded" },
     body: form.toString(),
   });
   const cuerpo = await r.json().catch(() => ({}));
@@ -214,7 +214,7 @@ async function pedirSeneca(cuenta, ruta, params = {}, reintentar = true) {
   }
   const url = new URL(SENECA + ruta);
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, v);
-  const r = await fetch(url, { headers: { "User-Agent": AGENTE, "Accept": "application/json", "Authorization": `Bearer ${cuenta.token}` } });
+  const r = await fetch(url, { headers: { "User-Agent": AGENTE, "Accept": "*/*", "Accept-Charset": "utf-8", "Authorization": `Bearer ${cuenta.token}` } });
   const renovado = r.headers.get("token-renew");
   if (renovado) cuenta.token = renovado;
   if (r.status === 401 && reintentar) {
