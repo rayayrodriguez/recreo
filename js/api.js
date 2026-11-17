@@ -86,6 +86,41 @@ export function extraerNotas(periodos) {
   return filas;
 }
 
+// Busca una clave por nombre en cualquier nivel de la respuesta (también dentro de textos con JSON).
+function buscarClave(obj, patron, nivel = 0) {
+  if (obj === null || obj === undefined || nivel > 6) return null;
+  if (typeof obj === "string") {
+    if (!/^\s*[{[]/.test(obj)) return null;
+    try {
+      return buscarClave(JSON.parse(obj), patron, nivel + 1);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof obj !== "object") return null;
+  for (const [k, v] of Object.entries(obj)) {
+    if (patron.test(k) && (typeof v === "string" || typeof v === "number") && String(v) !== "") return String(v);
+  }
+  for (const v of Object.values(obj)) {
+    const r = buscarClave(v, patron, nivel + 1);
+    if (r) return r;
+  }
+  return null;
+}
+
+// Copia de la respuesta sin datos sensibles, para poder diagnosticar.
+function resumen(obj, nivel = 0) {
+  if (nivel > 5) return "…";
+  if (Array.isArray(obj)) return obj.slice(0, 3).map((x) => resumen(x, nivel + 1));
+  if (obj && typeof obj === "object") return Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, resumen(v, nivel + 1)]));
+  if (typeof obj === "string" && obj.length > 14 && !/\s/.test(obj)) return `${obj.slice(0, 3)}…(${obj.length})`;
+  return obj;
+}
+
+const PATRON_TOKEN_2FA = /(two|2).?factor.*token/i;
+const PATRON_ENVIO = /send.?to|sent.?to|destino/i;
+const PATRON_AVISO_2FA = /doble factor|segundo factor|two.?factor|2fa|verificaci/i;
+
 export class Pasen {
   constructor() {
     this.codigoPendiente = null;
@@ -116,8 +151,7 @@ export class Pasen {
       client_id: "ipasen",
     });
     if (codigo) {
-      if (!this.codigoPendiente) throw new ErrorPasen("El código ha caducado. Vuelve a entrar.");
-      form.set("2FactorAuthToken", this.codigoPendiente);
+      if (this.codigoPendiente) form.set("2FactorAuthToken", this.codigoPendiente);
       form.set("2FactorAuthCode", codigo.trim());
       form.set("trustDevice", "true");
     } else if (almacen.leer("dispositivoDeConfianza")) {
@@ -135,6 +169,7 @@ export class Pasen {
       throw new ErrorPasen("No hay conexión con el intermediario. Revisa la dirección en Ajustes o tu conexión.");
     }
     const cuerpo = await r.json().catch(() => ({}));
+    this.ultimaRespuesta = { estado: r.status, cuerpo: resumen(cuerpo) };
 
     if (r.ok && cuerpo.access_token) {
       this.token = cuerpo.access_token;
@@ -143,13 +178,15 @@ export class Pasen {
       return { ok: true };
     }
 
-    const reto = cuerpo.data || {};
-    if (reto.twoFactorAuthToken) {
-      this.codigoPendiente = reto.twoFactorAuthToken;
-      return { ok: false, codigo: true, enviadoA: reto.sendTo || "" };
-    }
-
     const fallo = (cuerpo.errors || [])[0] || {};
+    const texto = fallo.detail || cuerpo.message || "";
+    const reto = buscarClave(cuerpo, PATRON_TOKEN_2FA);
+    if (!codigo && (reto || PATRON_AVISO_2FA.test(texto))) {
+      if (reto) this.codigoPendiente = reto;
+      return { ok: false, codigo: true, enviadoA: buscarClave(cuerpo, PATRON_ENVIO) || "" };
+    }
+    if (codigo) throw new ErrorPasen(texto || "El código no es válido. Pide uno nuevo volviendo a entrar.", r.status);
+
     if (r.status === 401 || r.status === 400) {
       throw new ErrorPasen(fallo.detail || "Usuario o contraseña incorrectos.", r.status);
     }

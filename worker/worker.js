@@ -105,6 +105,27 @@ function iguales(a, b) {
   return d === 0;
 }
 
+function buscarClave(obj, patron, nivel = 0) {
+  if (obj === null || obj === undefined || nivel > 6) return null;
+  if (typeof obj === "string") {
+    if (!/^\s*[{[]/.test(obj)) return null;
+    try {
+      return buscarClave(JSON.parse(obj), patron, nivel + 1);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof obj !== "object") return null;
+  for (const [k, v] of Object.entries(obj)) {
+    if (patron.test(k) && (typeof v === "string" || typeof v === "number") && String(v) !== "") return String(v);
+  }
+  for (const v of Object.values(obj)) {
+    const r = buscarClave(v, patron, nivel + 1);
+    if (r) return r;
+  }
+  return null;
+}
+
 function nombrePersona(t) {
   const m = String(t || "").trim().match(/^([^,(]+),\s*([^(]+?)\s*(\(.*\))?$/);
   return m ? `${m[2].trim()} ${m[1].trim()}` : String(t || "").trim();
@@ -159,7 +180,7 @@ async function entrar(cuenta, codigo = "") {
     username: cuenta.usuario, password: cuenta.clave, grant_type: "password", scope: "PASENDROID", client_id: "ipasen",
   });
   if (codigo) {
-    form.set("2FactorAuthToken", cuenta.reto || "");
+    if (cuenta.reto) form.set("2FactorAuthToken", cuenta.reto);
     form.set("2FactorAuthCode", String(codigo).trim());
     form.set("trustDevice", "true");
   } else if (cuenta.confiable) {
@@ -177,12 +198,12 @@ async function entrar(cuenta, codigo = "") {
     cuenta.reto = null;
     return { ok: true };
   }
-  const reto = cuerpo.data || {};
-  if (reto.twoFactorAuthToken) {
-    cuenta.reto = reto.twoFactorAuthToken;
-    return { ok: false, codigo: true, enviadoA: reto.sendTo || "" };
-  }
   const fallo = (cuerpo.errors || [])[0] || {};
+  const reto = buscarClave(cuerpo, /(two|2).?factor.*token/i);
+  if (!codigo && (reto || /doble factor|segundo factor|two.?factor|2fa|verificaci/i.test(fallo.detail || cuerpo.message || ""))) {
+    if (reto) cuenta.reto = reto;
+    return { ok: false, codigo: true, enviadoA: buscarClave(cuerpo, /send.?to|sent.?to|destino/i) || "" };
+  }
   return { ok: false, clave: r.status === 400 || r.status === 401, mensaje: fallo.detail || cuerpo.message || `Séneca ha respondido ${r.status}` };
 }
 

@@ -276,12 +276,13 @@ function pantallaCodigo(enviadoA, cred, recordar = true) {
   const app = document.getElementById("app");
   const error = h("p", { class: "error", role: "alert" });
   const codigo = h("input", { id: "codigo", inputmode: "numeric", autocomplete: "one-time-code", maxlength: "10", required: true });
+  const detalle = h("p", { class: "detalle-tecnico" });
   const boton = h("button", { class: "boton primario", type: "submit" }, "Confirmar");
   app.replaceChildren(
     h("main", { class: "acceso" },
       h("div", { class: "marca" },
         h("h1", {}, "Código"),
-        h("p", {}, enviadoA ? `Séneca ha enviado un código a ${enviadoA}. Escríbelo para terminar de entrar.` : "Séneca ha enviado un código de verificación. Escríbelo para terminar de entrar."),
+        h("p", {}, enviadoA ? `Séneca ha enviado un código a ${enviadoA}. Escríbelo para terminar de entrar.` : "Séneca te ha enviado un código por SMS. Escríbelo para terminar de entrar."),
       ),
       h("form", { class: "formulario", onsubmit: async (ev) => {
         ev.preventDefault();
@@ -290,14 +291,16 @@ function pantallaCodigo(enviadoA, cred, recordar = true) {
         try {
           const res = await api.entrar(cred.usuario, cred.clave, codigo.value);
           if (!res.ok) throw new ErrorPasen("El código no es válido. Prueba otra vez.");
+          detalle.textContent = "";
           if (recordar) almacen.guardar("credenciales", cred);
           arrancar();
         } catch (e) {
           error.textContent = e.message;
+          detalle.textContent = "Detalle técnico: " + JSON.stringify(api.ultimaRespuesta || {});
           boton.disabled = false;
         }
       } },
-        h("label", { for: "codigo" }, "Código de verificación"), codigo, error, boton,
+        h("label", { for: "codigo" }, "Código de verificación"), codigo, error, detalle, boton,
       ),
       h("button", { class: "boton enlace", type: "button", onclick: () => pantallaAcceso() }, "Volver"),
     ),
